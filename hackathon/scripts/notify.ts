@@ -1,5 +1,8 @@
 // One-shot proactive notification into a previously recorded conversation.
 // Usage: bun scripts/notify.ts "<message>"
+// CAUTION: Photon serves one live connection per project — running this while
+// the main agent is up preempts its stream. The agent now auto-reconnects
+// (~3s), but an inbound message arriving in that window can be lost.
 import { readFileSync } from "node:fs";
 import { Spectrum } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";

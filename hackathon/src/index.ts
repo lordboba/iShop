@@ -52,22 +52,31 @@ const { port } = startWebServer({
 const publicBaseUrl = (process.env.PUBLIC_BASE_URL ?? "http://localhost:3000").replace(/\/+$/, "");
 console.log(`[web] card server on port ${port}; public base ${publicBaseUrl}`);
 
-const app = await Spectrum({
-  projectId: process.env.PROJECT_ID!,
-  projectSecret: process.env.PROJECT_SECRET!,
-  providers: [imessage.config()],
-});
-console.log("[spectrum] connected — waiting for messages");
+// Photon serves one live connection per project: any other process connecting
+// (e.g. scripts/notify.ts) preempts this stream and ends the message iterator.
+// Reconnect instead of dying so a stray connection or network blip can't take
+// the agent down mid-demo. The mission store survives across reconnects.
+const client = createOpenAIMissionClient();
+const RECONNECT_DELAY_MS = 3_000;
 
-try {
-  await runAgentLoop(app, {
-    store,
-    client: createOpenAIMissionClient(),
-    searchCatalog,
-    createMerchantCarts,
-    publicBaseUrl,
-  });
-  crash("agent loop", new Error("message stream ended unexpectedly"));
-} catch (error) {
-  crash("agent loop", error);
+for (;;) {
+  try {
+    const app = await Spectrum({
+      projectId: process.env.PROJECT_ID!,
+      projectSecret: process.env.PROJECT_SECRET!,
+      providers: [imessage.config()],
+    });
+    console.log("[spectrum] connected — waiting for messages");
+    await runAgentLoop(app, {
+      store,
+      client,
+      searchCatalog,
+      createMerchantCarts,
+      publicBaseUrl,
+    });
+    console.warn("[spectrum] message stream ended (preempted or dropped) — reconnecting");
+  } catch (error) {
+    console.error("[spectrum] agent loop failed — reconnecting:", error);
+  }
+  await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAY_MS));
 }
