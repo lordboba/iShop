@@ -287,22 +287,32 @@ describe("createWebApp routes", () => {
     expect(missing.status).toBe(404);
   });
 
-  it("GET /ucp/profile derives URLs from PUBLIC_BASE_URL", async () => {
-    const previous = process.env.PUBLIC_BASE_URL;
-    process.env.PUBLIC_BASE_URL = "https://tunnel.example.com/";
-    try {
-      const res = await createWebApp(makeDeps()).request("/ucp/profile");
-      expect(res.status).toBe(200);
-      const profile = (await res.json()) as {
-        urls: { base: string; missionCard: string };
-        capabilities: Array<{ name: string }>;
+  it("GET /ucp/profile serves a UCP-conformant agent profile", async () => {
+    const res = await createWebApp(makeDeps()).request("/ucp/profile");
+    expect(res.status).toBe(200);
+    const profile = (await res.json()) as {
+      ucp: {
+        version: string;
+        services: Record<string, unknown>;
+        capabilities: Record<string, Array<{ version: string; extends?: string[] }>>;
+        payment_handlers: Record<string, unknown>;
       };
-      expect(profile.urls.base).toBe("https://tunnel.example.com");
-      expect(profile.urls.missionCard).toBe("https://tunnel.example.com/card/mission/{missionId}");
-      expect(profile.capabilities.map((c) => c.name)).toContain("checkout_card");
-    } finally {
-      if (previous === undefined) delete process.env.PUBLIC_BASE_URL;
-      else process.env.PUBLIC_BASE_URL = previous;
+    };
+    expect(profile.ucp.version).toBe("2026-04-08");
+    expect(profile.ucp.services["dev.ucp.shopping"]).toBeDefined();
+    for (const capability of [
+      "dev.ucp.shopping.checkout",
+      "dev.ucp.shopping.cart",
+      "dev.ucp.shopping.catalog.search",
+      "dev.ucp.shopping.catalog.lookup",
+      "dev.shopify.catalog.global",
+    ]) {
+      expect(profile.ucp.capabilities[capability]).toBeDefined();
     }
+    expect(profile.ucp.capabilities["dev.shopify.catalog.global"]![0]!.extends).toEqual([
+      "dev.ucp.shopping.catalog.lookup",
+      "dev.ucp.shopping.catalog.search",
+    ]);
+    expect(profile.ucp.payment_handlers).toEqual({});
   });
 });

@@ -29,7 +29,7 @@ type JsonRpcResponse = {
 export async function callMcpTool<T>(input: {
   endpoint: string;
   tool: string;
-  arguments: unknown;
+  arguments: Record<string, unknown>;
   bearerToken?: string;
   profileUrl: string;
 }): Promise<T> {
@@ -42,7 +42,6 @@ export async function callMcpTool<T>(input: {
       headers: {
         "content-type": "application/json",
         accept: "application/json",
-        "ucp-agent-profile": profileUrl,
         ...(bearerToken ? { authorization: `Bearer ${bearerToken}` } : {}),
       },
       body: JSON.stringify({
@@ -51,10 +50,12 @@ export async function callMcpTool<T>(input: {
         method: "tools/call",
         params: {
           name: tool,
-          arguments: input.arguments,
-          // Shopify UCP requires the agent profile inside the payload meta,
-          // not just a transport header.
-          meta: { "ucp-agent": { profile: profileUrl } },
+          // Shopify UCP requires the agent profile as `meta` INSIDE the tool
+          // arguments (verified live) — not in params and not as a header.
+          arguments: {
+            ...input.arguments,
+            meta: { "ucp-agent": { profile: profileUrl } },
+          },
         },
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),

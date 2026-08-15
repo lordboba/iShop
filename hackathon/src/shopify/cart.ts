@@ -1,6 +1,12 @@
 import { isHttpsUrl, type CheckoutPlan, type MerchantCart, type ProductCandidate } from "../domain/mission";
 import { callMcpTool, McpError } from "./mcp-client";
-import { isFixtureMode, toMinorUnits, ucpProfileUrl, type RawCartResponse } from "./types";
+import {
+  isFixtureMode,
+  parseMinorUnits,
+  ucpProfileUrl,
+  type RawCart,
+  type RawCartResponse,
+} from "./types";
 
 // A selected variant that the merchant's refreshed cart no longer contains
 // must block checkout — never silently drop a purchase the buyer approved.
@@ -30,6 +36,8 @@ export async function createMerchantCarts(
     const raw = await fetchCartResponse(domain, items, countryCode);
     // No Cart MCP (or no usable https checkout URL — merchant data must never
     // put a javascript:/data: link behind the checkout button) -> handoff.
+    // Variants ineligible for native checkout land here too: their merchants
+    // don't serve a Cart MCP, and each item keeps its checkout_url buy link.
     if (!raw || typeof raw.continue_url !== "string" || !isHttpsUrl(raw.continue_url)) {
       carts.push(handoffCart(domain, items));
     } else {
@@ -43,19 +51,25 @@ async function fetchCartResponse(
   domain: string,
   items: ProductCandidate[],
   countryCode: string,
-): Promise<RawCartResponse | null> {
+): Promise<RawCart | null> {
   const lineItems = items.map((item) => ({ item: { id: item.variantId }, quantity: 1 }));
   if (isFixtureMode()) {
     const { cartCreateFixture } = await import("../../tests/fixtures/shopify");
-    return cartCreateFixture(domain, lineItems);
+    return cartCreateFixture(domain, lineItems)?.cart ?? null;
   }
   try {
-    return await callMcpTool<RawCartResponse>({
-      endpoint: `https://${domain}/api/mcp`,
+    const response = await callMcpTool<RawCartResponse>({
+      // Merchant Cart MCP endpoint (per shopify.dev cart-mcp docs).
+      endpoint: `https://${domain}/api/ucp/mcp`,
       tool: "create_cart",
-      arguments: { line_items: lineItems, context: { address_country: countryCode } },
+      // Cart tool args are namespaced under `cart`, same meta-inside-arguments
+      // pattern as the catalog (meta is injected by callMcpTool).
+      arguments: {
+        cart: { line_items: lineItems, context: { address_country: countryCode } },
+      },
       profileUrl: ucpProfileUrl(),
     });
+    return response.cart ?? null;
   } catch (error) {
     // Only "this merchant has no Cart MCP" (HTTP 404/405, JSON-RPC method not
     // found) may degrade to handoff. Timeouts, 5xx, and transport failures
@@ -75,14 +89,15 @@ async function fetchCartResponse(
 function normalizeCart(
   domain: string,
   requested: ProductCandidate[],
-  raw: RawCartResponse,
+  raw: RawCart,
   continueUrl: string,
 ): MerchantCart {
   const lines = raw.line_items ?? [];
   const items = requested.map((product) => {
     const line = lines.find((l) => l.item?.id === product.variantId);
     if (!line) throw new CartVariantMissingError(product.variantId, domain);
-    const livePrice = toMinorUnits(line.price?.amount);
+    // Live price lives on item.price as integer minor units.
+    const livePrice = parseMinorUnits(line.item?.price);
     if (livePrice === null) {
       throw new Error(`cart at ${domain} returned an unparseable price for ${product.variantId}`);
     }

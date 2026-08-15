@@ -52,22 +52,60 @@ export function createWebApp(deps: WebDeps): Hono {
     return c.html(renderCheckoutCard(mission, plan));
   });
 
+  // UCP-conformant agent profile (schema per Shopify's published example at
+  // shopify.dev/ucp/agent-profiles/2026-04-08/valid-with-capabilities.json).
+  // Shopify's catalog rejects hand-rolled shapes with 422 invalid_profile_url,
+  // and rejects responses without a cacheable Cache-Control ("profile_malformed:
+  // Invalid cache control") — so the header below is load-bearing.
   app.get("/ucp/profile", (c) => {
-    const base = (process.env.PUBLIC_BASE_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+    c.header("cache-control", "public, max-age=3600, stale-while-revalidate=7200");
     return c.json({
-      name: "mission-shopper",
-      description: "Mission-based shopping agent: brief in, complete purchasable kit out.",
-      urls: {
-        base,
-        profile: `${base}/ucp/profile`,
-        missionCard: `${base}/card/mission/{missionId}`,
-        checkoutCard: `${base}/card/checkout/{missionId}`,
+      ucp: {
+        version: "2026-04-08",
+        services: {
+          "dev.ucp.shopping": [
+            {
+              version: "2026-04-08",
+              spec: "https://ucp.dev/2026-04-08/specification/overview",
+              transport: "mcp",
+              schema: "https://ucp.dev/2026-04-08/services/shopping/mcp.openrpc.json",
+            },
+          ],
+        },
+        capabilities: {
+          "dev.ucp.shopping.checkout": [{ version: "2026-04-08" }],
+          "dev.ucp.shopping.cart": [
+            {
+              version: "2026-04-08",
+              spec: "https://ucp.dev/2026-04-08/specification/cart",
+              schema: "https://ucp.dev/2026-04-08/schemas/shopping/cart.json",
+            },
+          ],
+          "dev.ucp.shopping.catalog.search": [
+            {
+              version: "2026-04-08",
+              spec: "https://ucp.dev/2026-04-08/specification/catalog/search",
+              schema: "https://ucp.dev/2026-04-08/schemas/shopping/catalog_search.json",
+            },
+          ],
+          "dev.ucp.shopping.catalog.lookup": [
+            {
+              version: "2026-04-08",
+              spec: "https://ucp.dev/2026-04-08/specification/catalog/lookup",
+              schema: "https://ucp.dev/2026-04-08/schemas/shopping/catalog_lookup.json",
+            },
+          ],
+          "dev.shopify.catalog.global": [
+            {
+              version: "2026-04-08",
+              spec: "https://shopify.dev/docs/agents/catalog/global-catalog",
+              schema: "https://shopify.dev/ucp/schemas/2026-04-08/shopify_catalog_global.json",
+              extends: ["dev.ucp.shopping.catalog.lookup", "dev.ucp.shopping.catalog.search"],
+            },
+          ],
+        },
+        payment_handlers: {},
       },
-      capabilities: [
-        { name: "mission_card", kind: "web_view", url: `${base}/card/mission/{missionId}` },
-        { name: "mission_action", kind: "http_form", url: `${base}/card/mission/{missionId}/action` },
-        { name: "checkout_card", kind: "web_view", url: `${base}/card/checkout/{missionId}` },
-      ],
     });
   });
 

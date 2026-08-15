@@ -10,9 +10,9 @@ beforeAll(() => {
 
 function candidate(overrides: Partial<ProductCandidate>): ProductCandidate {
   return {
-    productId: "prod-aurora-jacket",
-    variantId: "var-jacket-black",
-    title: "Aurora Field Jacket",
+    productId: "gid://shopify/p/aurora-jacket",
+    variantId: "gid://shopify/ProductVariant/jacket-black",
+    title: "Aurora Field Jacket - Black / M",
     sellerName: "Aurora Outfitters",
     sellerDomain: "aurora-outfitters.com",
     price: 8900,
@@ -25,23 +25,26 @@ function candidate(overrides: Partial<ProductCandidate>): ProductCandidate {
 }
 
 const jacketBlack = candidate({});
-const jacketNavy = candidate({ variantId: "var-jacket-navy", price: 9250 });
+const jacketNavy = candidate({
+  variantId: "gid://shopify/ProductVariant/jacket-navy",
+  price: 9250,
+});
 const shell = candidate({
-  productId: "prod-everline-shell",
-  variantId: "var-shell-1",
-  title: "Everline Rain Shell",
+  productId: "gid://shopify/p/everline-shell",
+  variantId: "gid://shopify/ProductVariant/shell-1",
+  title: "Everline Rain Shell - Black / M",
   sellerName: "Everline",
   sellerDomain: "everline.shop",
   price: 6400,
 });
 const bomber = candidate({
-  productId: "prod-handoff-bomber",
-  variantId: "var-bomber-1",
-  title: "Boutique Bomber Jacket",
+  productId: "gid://shopify/p/handoff-bomber",
+  variantId: "gid://shopify/ProductVariant/bomber-1",
+  title: "Boutique Bomber Jacket - Black / M",
   sellerName: "Handoff Boutique",
   sellerDomain: "handoff-boutique.com",
   price: 12000,
-  buyUrl: "https://handoff-boutique.com/buy/var-bomber-1",
+  buyUrl: "https://handoff-boutique.com/cart/bomber-1:1",
 });
 
 describe("createMerchantCarts", () => {
@@ -52,10 +55,12 @@ describe("createMerchantCarts", () => {
     const aurora = carts.find((c) => c.domain === "aurora-outfitters.com")!;
     const everline = carts.find((c) => c.domain === "everline.shop")!;
     expect(aurora.items.map((i) => i.variantId).sort()).toEqual([
-      "var-jacket-black",
-      "var-jacket-navy",
+      "gid://shopify/ProductVariant/jacket-black",
+      "gid://shopify/ProductVariant/jacket-navy",
     ]);
-    expect(everline.items.map((i) => i.variantId)).toEqual(["var-shell-1"]);
+    expect(everline.items.map((i) => i.variantId)).toEqual([
+      "gid://shopify/ProductVariant/shell-1",
+    ]);
     expect(aurora.mode).toBe("cart");
     expect(aurora.continueUrl).toBe("https://aurora-outfitters.com/checkout/cart-1");
   });
@@ -64,7 +69,9 @@ describe("createMerchantCarts", () => {
     const carts = await createMerchantCarts([jacketBlack, jacketNavy], "US");
 
     const aurora = carts[0]!;
-    const black = aurora.items.find((i) => i.variantId === "var-jacket-black")!;
+    const black = aurora.items.find(
+      (i) => i.variantId === "gid://shopify/ProductVariant/jacket-black",
+    )!;
     expect(black.livePrice).toBe(8500); // fixture cart repriced 8900 -> 8500
     expect(aurora.subtotal).toBe(8500 + 9250);
     expect(Number.isInteger(aurora.subtotal)).toBe(true);
@@ -75,7 +82,11 @@ describe("createMerchantCarts", () => {
     const carts = await createMerchantCarts(products, "US");
 
     expect(computePriceChanges(products, carts)).toEqual([
-      { variantId: "var-jacket-black", before: 8900, after: 8500 },
+      {
+        variantId: "gid://shopify/ProductVariant/jacket-black",
+        before: 8900,
+        after: 8500,
+      },
     ]);
   });
 
@@ -85,7 +96,7 @@ describe("createMerchantCarts", () => {
     expect(carts).toHaveLength(1);
     expect(carts[0]!.mode).toBe("handoff");
     expect(carts[0]!.continueUrl).toBe("https://handoff-boutique.com");
-    expect(carts[0]!.items[0]!.buyUrl).toBe("https://handoff-boutique.com/buy/var-bomber-1");
+    expect(carts[0]!.items[0]!.buyUrl).toBe("https://handoff-boutique.com/cart/bomber-1:1");
     expect(carts[0]!.items[0]!.livePrice).toBe(12000);
     expect(carts[0]!.subtotal).toBe(12000);
   });
@@ -94,28 +105,28 @@ describe("createMerchantCarts", () => {
     // A single merchant-level link would buy only one item and silently drop
     // the rest — every handoff item must keep its own link.
     const beanie = candidate({
-      productId: "prod-handoff-beanie",
-      variantId: "var-beanie-1",
+      productId: "gid://shopify/p/handoff-beanie",
+      variantId: "gid://shopify/ProductVariant/beanie-1",
       title: "Boutique Beanie",
       sellerName: "Handoff Boutique",
       sellerDomain: "handoff-boutique.com",
       price: 3000,
-      buyUrl: "https://handoff-boutique.com/buy/var-beanie-1",
+      buyUrl: "https://handoff-boutique.com/cart/beanie-1:1",
     });
 
     const carts = await createMerchantCarts([bomber, beanie], "US");
 
     expect(carts).toHaveLength(1);
     expect(carts[0]!.items.map((i) => i.buyUrl)).toEqual([
-      "https://handoff-boutique.com/buy/var-bomber-1",
-      "https://handoff-boutique.com/buy/var-beanie-1",
+      "https://handoff-boutique.com/cart/bomber-1:1",
+      "https://handoff-boutique.com/cart/beanie-1:1",
     ]);
     expect(carts[0]!.subtotal).toBe(15000);
   });
 
   it("drops a non-https buy url instead of carrying it into the card", async () => {
     const sketchy = candidate({
-      variantId: "var-sketchy",
+      variantId: "gid://shopify/ProductVariant/sketchy",
       sellerDomain: "handoff-boutique.com",
       buyUrl: "javascript:alert(1)" as string,
     });
@@ -128,7 +139,9 @@ describe("createMerchantCarts", () => {
   });
 
   it("refuses a variant missing from the refreshed cart", async () => {
-    const discontinued = candidate({ variantId: "var-discontinued" });
+    const discontinued = candidate({
+      variantId: "gid://shopify/ProductVariant/discontinued",
+    });
 
     expect(createMerchantCarts([discontinued], "US")).rejects.toThrow(CartVariantMissingError);
   });
@@ -185,15 +198,22 @@ describe("createMerchantCarts cart-MCP failure handling", () => {
       id: 1,
       result: {
         structuredContent: {
-          id: "cart-x",
-          continue_url: "javascript:alert(1)",
-          line_items: [
-            {
-              item: { id: "var-jacket-black" },
-              quantity: 1,
-              price: { amount: "89.00", currency: "USD" },
-            },
-          ],
+          cart: {
+            id: "gid://shopify/Cart/cart-x",
+            continue_url: "javascript:alert(1)",
+            currency: "USD",
+            line_items: [
+              {
+                id: "gid://shopify/CartLine/li_1",
+                item: {
+                  id: "gid://shopify/ProductVariant/jacket-black",
+                  title: "Aurora Field Jacket - Black / M",
+                  price: 8900,
+                },
+                quantity: 1,
+              },
+            ],
+          },
         },
       },
     });
