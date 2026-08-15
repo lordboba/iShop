@@ -1,6 +1,7 @@
-import { beforeAll, describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import type { ProductCandidate } from "../src/domain/mission";
 import { CartVariantMissingError, computePriceChanges, createMerchantCarts } from "../src/shopify/cart";
+import { McpError } from "../src/shopify/mcp-client";
 
 beforeAll(() => {
   process.env.SHOPIFY_FIXTURE_MODE = "1";
@@ -78,19 +79,131 @@ describe("createMerchantCarts", () => {
     ]);
   });
 
-  it("returns a handoff cart grouping buy urls when the merchant has no Cart MCP", async () => {
+  it("returns a handoff cart with per-item buy urls when the merchant has no Cart MCP", async () => {
     const carts = await createMerchantCarts([bomber], "US");
 
     expect(carts).toHaveLength(1);
     expect(carts[0]!.mode).toBe("handoff");
-    expect(carts[0]!.continueUrl).toBe("https://handoff-boutique.com/buy/var-bomber-1");
+    expect(carts[0]!.continueUrl).toBe("https://handoff-boutique.com");
+    expect(carts[0]!.items[0]!.buyUrl).toBe("https://handoff-boutique.com/buy/var-bomber-1");
     expect(carts[0]!.items[0]!.livePrice).toBe(12000);
     expect(carts[0]!.subtotal).toBe(12000);
+  });
+
+  it("carries one buy url per item in a multi-item handoff cart", async () => {
+    // A single merchant-level link would buy only one item and silently drop
+    // the rest — every handoff item must keep its own link.
+    const beanie = candidate({
+      productId: "prod-handoff-beanie",
+      variantId: "var-beanie-1",
+      title: "Boutique Beanie",
+      sellerName: "Handoff Boutique",
+      sellerDomain: "handoff-boutique.com",
+      price: 3000,
+      buyUrl: "https://handoff-boutique.com/buy/var-beanie-1",
+    });
+
+    const carts = await createMerchantCarts([bomber, beanie], "US");
+
+    expect(carts).toHaveLength(1);
+    expect(carts[0]!.items.map((i) => i.buyUrl)).toEqual([
+      "https://handoff-boutique.com/buy/var-bomber-1",
+      "https://handoff-boutique.com/buy/var-beanie-1",
+    ]);
+    expect(carts[0]!.subtotal).toBe(15000);
+  });
+
+  it("drops a non-https buy url instead of carrying it into the card", async () => {
+    const sketchy = candidate({
+      variantId: "var-sketchy",
+      sellerDomain: "handoff-boutique.com",
+      buyUrl: "javascript:alert(1)" as string,
+    });
+
+    const carts = await createMerchantCarts([sketchy], "US");
+
+    expect(carts[0]!.mode).toBe("handoff");
+    expect(carts[0]!.items[0]!.buyUrl).toBeUndefined();
+    expect(carts[0]!.continueUrl).toBe("https://handoff-boutique.com");
   });
 
   it("refuses a variant missing from the refreshed cart", async () => {
     const discontinued = candidate({ variantId: "var-discontinued" });
 
     expect(createMerchantCarts([discontinued], "US")).rejects.toThrow(CartVariantMissingError);
+  });
+});
+
+// Live (non-fixture) mode with a stubbed fetch, to exercise the error
+// discrimination in fetchCartResponse: only "no Cart MCP" may hand off.
+describe("createMerchantCarts cart-MCP failure handling", () => {
+  async function inLiveModeWithFetch(
+    respond: () => Response,
+    run: () => Promise<void>,
+  ): Promise<void> {
+    const prevFixture = process.env.SHOPIFY_FIXTURE_MODE;
+    const prevClient = process.env.SHOPIFY_CATALOG_CLIENT_ID;
+    delete process.env.SHOPIFY_FIXTURE_MODE;
+    process.env.SHOPIFY_CATALOG_CLIENT_ID = "test-client";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => respond()) as unknown as typeof fetch;
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await run();
+    } finally {
+      warnSpy.mockRestore();
+      globalThis.fetch = originalFetch;
+      if (prevFixture === undefined) delete process.env.SHOPIFY_FIXTURE_MODE;
+      else process.env.SHOPIFY_FIXTURE_MODE = prevFixture;
+      if (prevClient === undefined) delete process.env.SHOPIFY_CATALOG_CLIENT_ID;
+      else process.env.SHOPIFY_CATALOG_CLIENT_ID = prevClient;
+    }
+  }
+
+  it("hands off when the merchant has no Cart MCP (HTTP 404)", async () => {
+    await inLiveModeWithFetch(
+      () => new Response("not found", { status: 404 }),
+      async () => {
+        const carts = await createMerchantCarts([jacketBlack], "US");
+        expect(carts[0]!.mode).toBe("handoff");
+      },
+    );
+  });
+
+  it("surfaces transient cart failures instead of silently handing off (HTTP 500)", async () => {
+    await inLiveModeWithFetch(
+      () => new Response("boom", { status: 500 }),
+      async () => {
+        expect(createMerchantCarts([jacketBlack], "US")).rejects.toThrow(McpError);
+      },
+    );
+  });
+
+  it("refuses a non-https continue_url and hands off instead of linking it", async () => {
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {
+        structuredContent: {
+          id: "cart-x",
+          continue_url: "javascript:alert(1)",
+          line_items: [
+            {
+              item: { id: "var-jacket-black" },
+              quantity: 1,
+              price: { amount: "89.00", currency: "USD" },
+            },
+          ],
+        },
+      },
+    });
+    await inLiveModeWithFetch(
+      () => new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
+      async () => {
+        const carts = await createMerchantCarts([jacketBlack], "US");
+        expect(carts[0]!.mode).toBe("handoff");
+        expect(carts[0]!.continueUrl).toBe("https://aurora-outfitters.com");
+      },
+    );
   });
 });

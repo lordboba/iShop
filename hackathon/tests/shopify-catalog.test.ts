@@ -62,6 +62,30 @@ describe("searchCatalog", () => {
 });
 
 describe("normalizeCatalogSearch", () => {
+  it("drops offers whose buy or image urls are not https", () => {
+    // javascript:/data: URLs pass zod's .url() but would land in href/src
+    // attributes inside the card webview — they must never survive.
+    const results = normalizeCatalogSearch({
+      products: [
+        {
+          id: "prod-sketchy",
+          title: "Sketchy Jacket",
+          image_url: "data:text/html,<script>alert(1)</script>",
+          seller: { name: "Sketchy", domain: "sketchy.example" },
+          offers: [
+            {
+              variant_id: "var-sketchy",
+              price: { amount: "10.00", currency: "USD" },
+              buy_url: "javascript:alert(1)",
+            },
+          ],
+        },
+      ],
+    });
+    expect(results).toEqual([]);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("requires seller domain and variant id", () => {
     const results = normalizeCatalogSearch({
       products: [

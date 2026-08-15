@@ -3,17 +3,29 @@ import { z } from "zod";
 // All prices are integer minor currency units (cents). The model never does
 // authoritative arithmetic — totals come from reducer selectors.
 
+// Merchant-supplied URLs end up in href/src attributes inside card webviews.
+// zod's .url() accepts javascript:/data: schemes, so require https explicitly.
+export function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+const httpsUrlSchema = z.string().url().refine(isHttpsUrl, { message: "must be an https URL" });
+
 export const productCandidateSchema = z.object({
   productId: z.string(),
   variantId: z.string(),
   title: z.string(),
-  imageUrl: z.string().url().optional(),
+  imageUrl: httpsUrlSchema.optional(),
   sellerName: z.string(),
   sellerDomain: z.string(),
   price: z.number().int().nonnegative(),
   currency: z.string().length(3),
   selectedOptions: z.record(z.string(), z.string()).default({}),
-  buyUrl: z.string().url().optional(),
+  buyUrl: httpsUrlSchema.optional(),
   matchedConstraints: z.array(z.string()).default([]),
   uncertainConstraints: z.array(z.string()).default([]),
 });
@@ -65,6 +77,7 @@ export type MerchantCart = {
     title: string;
     quantity: number;
     livePrice: number;
+    buyUrl?: string; // handoff mode: per-item buy link (one link buys one item)
   }>;
   subtotal: number;
   continueUrl: string;

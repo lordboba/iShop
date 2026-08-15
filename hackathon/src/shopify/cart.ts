@@ -1,5 +1,5 @@
-import type { CheckoutPlan, MerchantCart, ProductCandidate } from "../domain/mission";
-import { callMcpTool } from "./mcp-client";
+import { isHttpsUrl, type CheckoutPlan, type MerchantCart, type ProductCandidate } from "../domain/mission";
+import { callMcpTool, McpError } from "./mcp-client";
 import { isFixtureMode, toMinorUnits, ucpProfileUrl, type RawCartResponse } from "./types";
 
 // A selected variant that the merchant's refreshed cart no longer contains
@@ -28,8 +28,9 @@ export async function createMerchantCarts(
   const carts: MerchantCart[] = [];
   for (const [domain, items] of bySeller) {
     const raw = await fetchCartResponse(domain, items, countryCode);
-    // No Cart MCP (or no usable checkout URL) -> buy-link handoff.
-    if (!raw || typeof raw.continue_url !== "string") {
+    // No Cart MCP (or no usable https checkout URL — merchant data must never
+    // put a javascript:/data: link behind the checkout button) -> handoff.
+    if (!raw || typeof raw.continue_url !== "string" || !isHttpsUrl(raw.continue_url)) {
       carts.push(handoffCart(domain, items));
     } else {
       carts.push(normalizeCart(domain, items, raw, raw.continue_url));
@@ -55,8 +56,19 @@ async function fetchCartResponse(
       arguments: { line_items: lineItems, context: { address_country: countryCode } },
       profileUrl: ucpProfileUrl(),
     });
-  } catch {
-    return null;
+  } catch (error) {
+    // Only "this merchant has no Cart MCP" (HTTP 404/405, JSON-RPC method not
+    // found) may degrade to handoff. Timeouts, 5xx, and transport failures
+    // must surface so the buyer is told to retry instead of being shown stale
+    // prices as live-verified.
+    if (
+      error instanceof McpError &&
+      (error.code === 404 || error.code === 405 || error.code === -32601)
+    ) {
+      console.warn(`[cart] ${domain} has no Cart MCP (code ${error.code}) — buy-link handoff`);
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -100,9 +112,12 @@ function handoffCart(domain: string, items: ProductCandidate[]): MerchantCart {
       title: product.title,
       quantity: 1,
       livePrice: product.price, // no revalidation available in handoff mode
+      // One buy link per item — a single merchant-level link buys only one
+      // item, which would silently drop the rest of a multi-item handoff.
+      buyUrl: product.buyUrl && isHttpsUrl(product.buyUrl) ? product.buyUrl : undefined,
     })),
     subtotal: items.reduce((sum, product) => sum + product.price, 0),
-    continueUrl: items.find((product) => product.buyUrl)?.buyUrl ?? `https://${domain}`,
+    continueUrl: `https://${domain}`,
     mode: "handoff",
   };
 }

@@ -1,34 +1,73 @@
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { Spectrum } from "spectrum-ts";
-import { imessage } from "@spectrum-ts/imessage";
+import { imessage } from "spectrum-ts/providers/imessage";
+import { runAgentLoop } from "./agent/loop";
+import { createOpenAIMissionClient } from "./agent/mission-parser";
+import { createMerchantCarts } from "./shopify/cart";
+import { searchCatalog } from "./shopify/catalog";
+import { MissionStore, type MissionAction } from "./state/mission-store";
+import { startWebServer } from "./web/server";
 
-// Spectrum bridges a single agent loop to many messaging interfaces.
-// Docs: https://photon.codes/docs/spectrum-ts
+// One process, two halves: the Hono card server and the Spectrum message
+// loop, sharing a single in-memory MissionStore. Either half dying must take
+// the whole process down loudly — a half-running agent is worse than a dead one.
+function crash(context: string, error: unknown): never {
+  console.error(`[fatal] ${context}:`, error);
+  process.exit(1);
+}
+process.on("uncaughtException", (error) => crash("uncaught exception", error));
+process.on("unhandledRejection", (reason) => crash("unhandled rejection", reason));
+
+const store = new MissionStore();
+
+function toMissionAction(action: {
+  kind: "lock" | "unlock" | "select";
+  slotId: string;
+  variantId?: string;
+}): MissionAction | null {
+  switch (action.kind) {
+    case "lock":
+      return { type: "slotLocked", slotId: action.slotId };
+    case "unlock":
+      return { type: "slotUnlocked", slotId: action.slotId };
+    case "select":
+      return action.variantId
+        ? { type: "candidateSelected", slotId: action.slotId, variantId: action.variantId }
+        : null;
+  }
+}
+
+const { port } = startWebServer({
+  getMission: (missionId) => store.getByMissionId(missionId),
+  getCheckoutPlan: (missionId) => store.getCheckoutPlan(missionId),
+  act: (missionId, action) => {
+    const spaceId = store.spaceIdForMission(missionId);
+    if (!spaceId) return null;
+    const missionAction = toMissionAction(action);
+    // A select without a variant is a no-op re-render, not an error page.
+    if (!missionAction) return store.getByMissionId(missionId);
+    return store.dispatch(spaceId, missionAction);
+  },
+});
+
+const publicBaseUrl = (process.env.PUBLIC_BASE_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+console.log(`[web] card server on port ${port}; public base ${publicBaseUrl}`);
+
 const app = await Spectrum({
   projectId: process.env.PROJECT_ID!,
   projectSecret: process.env.PROJECT_SECRET!,
   providers: [imessage.config()],
 });
+console.log("[spectrum] connected — waiting for messages");
 
-// Persist every inbound conversation so we can proactively message it later
-// (Spectrum has no space-listing API; capture-on-inbound is the only path).
-const STATE_DIR = new URL("../.state/", import.meta.url).pathname;
-const SPACES_FILE = `${STATE_DIR}spaces.json`;
-mkdirSync(STATE_DIR, { recursive: true });
-
-function recordSpace(spaceId: string, senderId: string | undefined) {
-  const known: Record<string, { senderId?: string; lastSeen: string }> =
-    existsSync(SPACES_FILE) ? JSON.parse(readFileSync(SPACES_FILE, "utf8")) : {};
-  known[spaceId] = { senderId, lastSeen: new Date().toISOString() };
-  writeFileSync(SPACES_FILE, JSON.stringify(known, null, 2));
-}
-
-for await (const [space, message] of app.messages) {
-  if (message.direction === "outbound") continue;
-  const spaceId = (space as unknown as { id?: string }).id ?? "unknown";
-  recordSpace(spaceId, message.sender?.id);
-  console.log(`[inbound] space=${spaceId} sender=${message.sender?.id ?? "?"} type=${message.content.type}`);
-  if (message.content.type === "text") {
-    await space.send(`echo: ${message.content.text}`);
-  }
+try {
+  await runAgentLoop(app, {
+    store,
+    client: createOpenAIMissionClient(),
+    searchCatalog,
+    createMerchantCarts,
+    publicBaseUrl,
+  });
+  crash("agent loop", new Error("message stream ended unexpectedly"));
+} catch (error) {
+  crash("agent loop", error);
 }
