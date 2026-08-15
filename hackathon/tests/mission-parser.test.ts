@@ -1,13 +1,19 @@
 import { describe, it, expect } from "bun:test";
-import { parseMission, type MissionModelClient } from "../src/agent/mission-parser";
-import { shoppingMissionSchema, type ShoppingMission } from "../src/domain/mission";
+import {
+  parseMission,
+  type MissionModelClient,
+} from "../src/agent/mission-parser";
+import {
+  shoppingMissionSchema,
+  type ShoppingMission,
+} from "../src/domain/mission";
 
 type ModelOutput = {
   intent: "create" | "revise" | "checkout" | "smalltalk";
   mission: {
-    goal: string;
-    countryCode: string;
-    budget: { amount: number; currency: string } | null;
+    goal: string | null;
+    countryCode: string | null;
+    budget: { amount: number; currency: string | null } | null;
     globalHardConstraints: string[];
     globalPreferences: string[];
     slots: Array<{
@@ -26,7 +32,11 @@ function fakeClient(output: ModelOutput) {
   const calls: Array<{ system: string; user: string; imageUrl?: string }> = [];
   const client: MissionModelClient = {
     async complete(args) {
-      calls.push({ system: args.system, user: args.user, imageUrl: args.imageUrl });
+      calls.push({
+        system: args.system,
+        user: args.user,
+        imageUrl: args.imageUrl,
+      });
       return output;
     },
   };
@@ -63,7 +73,11 @@ describe("parseMission", () => {
       missingFields: [],
       reply: null,
     });
-    const result = await parseMission({ text: "outfit for a June wedding, $400" }, null, client);
+    const result = await parseMission(
+      { text: "outfit for a June wedding, $400" },
+      null,
+      client,
+    );
     expect(result.intent).toBe("create");
     expect(result.mission).not.toBeNull();
     const mission = result.mission!;
@@ -82,7 +96,10 @@ describe("parseMission", () => {
       mission: {
         ...outfitMission,
         slots: [
-          slot("Earrings", { hardConstraints: ["nickel-free"], softPreferences: ["gold tone"] }),
+          slot("Earrings", {
+            hardConstraints: ["nickel-free"],
+            softPreferences: ["gold tone"],
+          }),
           slot("Sweater", { hardConstraints: ["no wool"] }),
         ],
       },
@@ -103,11 +120,18 @@ describe("parseMission", () => {
   it("converts a dollar budget to integer cents", async () => {
     const { client } = fakeClient({
       intent: "create",
-      mission: { ...outfitMission, budget: { amount: 249.99, currency: "usd" } },
+      mission: {
+        ...outfitMission,
+        budget: { amount: 249.99, currency: "usd" },
+      },
       missingFields: [],
       reply: null,
     });
-    const result = await parseMission({ text: "outfit under $249.99" }, null, client);
+    const result = await parseMission(
+      { text: "outfit under $249.99" },
+      null,
+      client,
+    );
     expect(result.mission!.budget.amount).toBe(24999);
     expect(Number.isInteger(result.mission!.budget.amount)).toBe(true);
     expect(result.mission!.budget.currency).toBe("USD");
@@ -120,10 +144,119 @@ describe("parseMission", () => {
       missingFields: ["budget"],
       reply: "What's your budget for the outfit?",
     });
-    const result = await parseMission({ text: "outfit for a June wedding" }, null, client);
+    const result = await parseMission(
+      { text: "outfit for a June wedding" },
+      null,
+      client,
+    );
     expect(result.mission).toBeNull();
     expect(result.missingFields).toContain("budget");
     expect(result.reply).toBe("What's your budget for the outfit?");
+  });
+
+  it("returns a reusable draft when required onboarding data is missing", async () => {
+    const { client } = fakeClient({
+      intent: "create",
+      mission: { ...outfitMission, budget: null },
+      missingFields: ["budget"],
+      reply: "What's your budget for the outfit?",
+    });
+
+    const result = await parseMission(
+      { text: "clothes for a wedding" },
+      null,
+      client,
+    );
+
+    expect(result.mission).toBeNull();
+    expect(result.draft?.goal).toBe("Wedding guest outfit");
+    expect(result.draft?.slots).toHaveLength(4);
+  });
+
+  it("includes a budget-first onboarding draft in the next model turn", async () => {
+    const first = fakeClient({
+      intent: "create",
+      mission: {
+        ...outfitMission,
+        goal: "",
+        budget: { amount: 250, currency: "USD" },
+        slots: [slot("Clothing", { query: "clothing" })],
+      },
+      missingFields: ["goal"],
+      reply: "What would you like to shop for?",
+    });
+    const firstResult = await parseMission({ text: "250" }, null, first.client);
+
+    const second = fakeClient({
+      intent: "create",
+      mission: {
+        ...outfitMission,
+        goal: "Clothes",
+        budget: { amount: 250, currency: "USD" },
+        slots: [slot("Clothing", { query: "clothing" })],
+      },
+      missingFields: [],
+      reply: null,
+    });
+    const secondResult = await parseMission(
+      { text: "Clothes" },
+      null,
+      second.client,
+      firstResult.draft,
+    );
+
+    expect(second.calls[0]!.user).toContain("Current onboarding draft JSON");
+    expect(second.calls[0]!.user).toContain('"amount":250');
+    expect(secondResult.mission?.budget.amount).toBe(25000);
+  });
+
+  it("does not block on country or currency when the default market is available", async () => {
+    const { client } = fakeClient({
+      intent: "create",
+      mission: {
+        ...outfitMission,
+        goal: "Clothes",
+        countryCode: "US",
+        budget: { amount: 250, currency: "USD" },
+        slots: [slot("Clothing", { query: "clothing" })],
+      },
+      missingFields: ["country", "currency"],
+      reply: "What country and currency should I use?",
+    });
+
+    const result = await parseMission(
+      { text: "$250 budget for clothes" },
+      null,
+      client,
+    );
+
+    expect(result.missingFields).toEqual([]);
+    expect(result.mission?.countryCode).toBe("US");
+    expect(result.mission?.budget.currency).toBe("USD");
+  });
+
+  it("normalizes a truly partial budget-only response with market defaults", async () => {
+    const { client } = fakeClient({
+      intent: "create",
+      mission: {
+        goal: null,
+        countryCode: null,
+        budget: { amount: 250, currency: null },
+        globalHardConstraints: [],
+        globalPreferences: [],
+        slots: [],
+      },
+      missingFields: ["goal"],
+      reply: "What would you like to shop for?",
+    });
+
+    const result = await parseMission({ text: "250" }, null, client);
+
+    expect(result.mission).toBeNull();
+    expect(result.missingFields).toEqual(["goal"]);
+    expect(result.draft?.goal).toBeNull();
+    expect(result.draft?.countryCode).toBe("US");
+    expect(result.draft?.budget).toEqual({ amount: 250, currency: "USD" });
   });
 
   it("classifies a follow-up message as a revision, not a new mission", async () => {
@@ -165,18 +298,27 @@ describe("parseMission", () => {
         budget: { amount: 400, currency: "USD" },
         slots: [
           slot("Dress"),
-          slot("Shoes", { query: "cheaper block heel shoes", softPreferences: ["under $80"] }),
+          slot("Shoes", {
+            query: "cheaper block heel shoes",
+            softPreferences: ["under $80"],
+          }),
         ],
       },
       missingFields: [],
       reply: null,
     });
-    const result = await parseMission({ text: "find cheaper shoes" }, current, client);
+    const result = await parseMission(
+      { text: "find cheaper shoes" },
+      current,
+      client,
+    );
     expect(result.intent).toBe("revise");
     const mission = result.mission!;
     // same mission, same stable ids — not a new mission
     expect(mission.id).toBe("mission-1");
-    expect(mission.slots.find((s) => s.label === "Shoes")!.id).toBe("slot-shoes");
+    expect(mission.slots.find((s) => s.label === "Shoes")!.id).toBe(
+      "slot-shoes",
+    );
     // locked slot survives untouched
     const dress = mission.slots.find((s) => s.label === "Dress")!;
     expect(dress.locked).toBe(true);

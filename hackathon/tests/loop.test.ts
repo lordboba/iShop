@@ -1,12 +1,22 @@
 import { describe, expect, it } from "bun:test";
-import { mergeLiveSlotState } from "../src/agent/loop";
+import type { Message, Space } from "spectrum-ts";
+import {
+  handleInbound,
+  mergeLiveSlotState,
+  type AgentLoopDeps,
+  type SpaceSession,
+} from "../src/agent/loop";
+import type { MissionModelClient } from "../src/agent/mission-parser";
 import type {
   MissionSlot,
   ProductCandidate,
   ShoppingMission,
 } from "../src/domain/mission";
+import { MissionStore } from "../src/state/mission-store";
 
-function candidate(overrides: Partial<ProductCandidate> = {}): ProductCandidate {
+function candidate(
+  overrides: Partial<ProductCandidate> = {},
+): ProductCandidate {
   return {
     productId: "p1",
     variantId: "v1",
@@ -69,7 +79,9 @@ describe("mergeLiveSlotState", () => {
     const alt = candidate({ variantId: "v2", price: 6100 });
     const parsed = mission();
     const live = mission({
-      slots: [slot({ candidates: [candidate(), alt], selectedVariantId: "v2" })],
+      slots: [
+        slot({ candidates: [candidate(), alt], selectedVariantId: "v2" }),
+      ],
     });
 
     const merged = mergeLiveSlotState(parsed, live);
@@ -82,7 +94,13 @@ describe("mergeLiveSlotState", () => {
     // The parser cleared candidates on purpose because the query changed —
     // the live (pre-revision) selection must not resurrect it.
     const parsed = mission({
-      slots: [slot({ query: "silk dress", candidates: [], selectedVariantId: undefined })],
+      slots: [
+        slot({
+          query: "silk dress",
+          candidates: [],
+          selectedVariantId: undefined,
+        }),
+      ],
     });
     const live = mission();
 
@@ -95,7 +113,13 @@ describe("mergeLiveSlotState", () => {
 
   it("a live lock wins even over a spec revision", () => {
     const parsed = mission({
-      slots: [slot({ query: "silk dress", candidates: [], selectedVariantId: undefined })],
+      slots: [
+        slot({
+          query: "silk dress",
+          candidates: [],
+          selectedVariantId: undefined,
+        }),
+      ],
     });
     const live = mission({ slots: [slot({ locked: true })] });
 
@@ -107,7 +131,12 @@ describe("mergeLiveSlotState", () => {
   });
 
   it("passes brand-new slots through untouched", () => {
-    const added = slot({ id: "s-shoes", label: "Shoes", query: "heels", candidates: [] });
+    const added = slot({
+      id: "s-shoes",
+      label: "Shoes",
+      query: "heels",
+      candidates: [],
+    });
     const parsed = mission({ slots: [slot(), added] });
     const live = mission();
 
@@ -115,5 +144,110 @@ describe("mergeLiveSlotState", () => {
 
     expect(merged.slots).toHaveLength(2);
     expect(merged.slots[1]!.id).toBe("s-shoes");
+  });
+});
+
+describe("onboarding conversation", () => {
+  it("carries a budget-first draft into the next iMessage turn", async () => {
+    const modelCalls: string[] = [];
+    const outputs = [
+      {
+        intent: "create",
+        mission: {
+          goal: "",
+          countryCode: "US",
+          budget: { amount: 250, currency: "USD" },
+          globalHardConstraints: [],
+          globalPreferences: [],
+          slots: [
+            {
+              label: "Clothing",
+              query: "clothing",
+              required: true,
+              hardConstraints: [],
+              softPreferences: [],
+            },
+          ],
+        },
+        missingFields: ["goal"],
+        reply: "What would you like to shop for?",
+      },
+      {
+        intent: "create",
+        mission: {
+          goal: "Clothes",
+          countryCode: "US",
+          budget: { amount: 250, currency: "USD" },
+          globalHardConstraints: [],
+          globalPreferences: [],
+          slots: [
+            {
+              label: "Clothing",
+              query: "clothing",
+              required: true,
+              hardConstraints: [],
+              softPreferences: [],
+            },
+          ],
+        },
+        missingFields: [],
+        reply: null,
+      },
+    ];
+    const client: MissionModelClient = {
+      async complete(args) {
+        modelCalls.push(args.user);
+        return outputs.shift();
+      },
+    };
+    const sent: unknown[] = [];
+    const editableMessage = { edit: async () => undefined };
+    const space = {
+      id: "space-onboarding",
+      async send(content: unknown) {
+        sent.push(content);
+        return editableMessage;
+      },
+      async responding(run: () => Promise<void>) {
+        await run();
+      },
+    } as unknown as Space;
+    const deps: AgentLoopDeps = {
+      store: new MissionStore(),
+      client,
+      searchCatalog: async () => [],
+      createMerchantCarts: async () => [],
+      publicBaseUrl: "https://shop.example",
+    };
+    const session: SpaceSession = {};
+
+    await handleInbound(
+      space,
+      {
+        direction: "inbound",
+        content: { type: "text", text: "250" },
+      } as Message,
+      deps,
+      session,
+    );
+    expect(sent[0]).toBe("Got it — $250. What would you like to shop for?");
+    await handleInbound(
+      space,
+      {
+        direction: "inbound",
+        content: { type: "text", text: "Clothes" },
+      } as Message,
+      deps,
+      session,
+    );
+
+    expect(modelCalls[1]).toContain("Current onboarding draft JSON");
+    expect(modelCalls[1]).toContain('"amount":250');
+    expect(deps.store.getBySpace(space.id)?.goal).toBe("Clothes");
+    expect(deps.store.getBySpace(space.id)?.budget.amount).toBe(25000);
+    expect(session.draft).toBeUndefined();
+    expect(
+      sent.filter((item): item is string => typeof item === "string").join(" "),
+    ).not.toMatch(/country|currency/i);
   });
 });

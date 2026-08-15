@@ -67,6 +67,7 @@ export function createOpenAIMissionClient(): MissionModelClient; // OPENAI_API_K
 export type ParseResult = {
   intent: "create" | "revise" | "checkout" | "smalltalk";
   mission: ShoppingMission | null; // null when smalltalk/checkout or missing fields block creation
+  draft: MissionDraft | null;      // normalized partial brief retained across onboarding turns
   missingFields: string[];         // e.g. ["budget"]
   reply?: string;                  // short conversational reply for smalltalk/clarification
 };
@@ -74,6 +75,7 @@ export function parseMission(
   input: { text: string; imageUrl?: string },
   current: ShoppingMission | null,
   client: MissionModelClient,
+  currentDraft?: MissionDraft | null,
 ): Promise<ParseResult>;
 ```
 

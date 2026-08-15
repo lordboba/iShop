@@ -20,6 +20,7 @@ export interface MissionModelClient {
 export type ParseResult = {
   intent: "create" | "revise" | "checkout" | "smalltalk";
   mission: ShoppingMission | null;
+  draft: MissionDraft | null;
   missingFields: string[];
   reply?: string;
 };
@@ -35,13 +36,29 @@ const modelSlotSchema = z.object({
 });
 
 const modelMissionSchema = z.object({
-  goal: z.string(),
-  countryCode: z.string().length(2),
-  budget: z.object({ amount: z.number().positive(), currency: z.string().length(3) }).nullable(),
+  goal: z.string().nullable(),
+  countryCode: z.string().length(2).nullable(),
+  budget: z
+    .object({
+      amount: z.number().positive(),
+      currency: z.string().length(3).nullable(),
+    })
+    .nullable(),
   globalHardConstraints: z.array(z.string()),
   globalPreferences: z.array(z.string()),
-  slots: z.array(modelSlotSchema).min(1).max(5),
+  slots: z.array(modelSlotSchema).max(5),
 });
+
+type ModelMissionDraft = z.infer<typeof modelMissionSchema>;
+
+export type MissionDraft = {
+  goal: string | null;
+  countryCode: string;
+  budget: { amount: number; currency: string } | null;
+  globalHardConstraints: string[];
+  globalPreferences: string[];
+  slots: Array<z.infer<typeof modelSlotSchema>>;
+};
 
 const modelOutputSchema = z.object({
   intent: z.enum(["create", "revise", "checkout", "smalltalk"]),
@@ -50,15 +67,25 @@ const modelOutputSchema = z.object({
   reply: z.string().nullable(),
 });
 
-const missionParseJsonSchema = z.toJSONSchema(modelOutputSchema) as Record<string, unknown>;
+const missionParseJsonSchema = z.toJSONSchema(modelOutputSchema) as Record<
+  string,
+  unknown
+>;
 
 export function createOpenAIMissionClient(): MissionModelClient {
   let openai: OpenAI | null = null; // lazy: importing without OPENAI_API_KEY never throws
   return {
     async complete({ system, user, imageUrl, schema }) {
       openai ??= new OpenAI();
-      const content: OpenAI.Responses.ResponseInputContent[] = [{ type: "input_text", text: user }];
-      if (imageUrl) content.push({ type: "input_image", image_url: imageUrl, detail: "auto" });
+      const content: OpenAI.Responses.ResponseInputContent[] = [
+        { type: "input_text", text: user },
+      ];
+      if (imageUrl)
+        content.push({
+          type: "input_image",
+          image_url: imageUrl,
+          detail: "auto",
+        });
       const response = await openai.responses.create({
         model: process.env.OPENAI_MODEL ?? "gpt-5.6-luna",
         reasoning: { effort: "low" },
@@ -67,7 +94,12 @@ export function createOpenAIMissionClient(): MissionModelClient {
           { role: "user", content },
         ],
         text: {
-          format: { type: "json_schema", name: "mission_parse", schema, strict: true },
+          format: {
+            type: "json_schema",
+            name: "mission_parse",
+            schema,
+            strict: true,
+          },
         },
       });
       return JSON.parse(response.output_text);
@@ -80,7 +112,10 @@ function missionForModel(mission: ShoppingMission) {
   return {
     goal: mission.goal,
     countryCode: mission.countryCode,
-    budget: { amount: mission.budget.amount / 100, currency: mission.budget.currency },
+    budget: {
+      amount: mission.budget.amount / 100,
+      currency: mission.budget.currency,
+    },
     globalHardConstraints: mission.globalHardConstraints,
     globalPreferences: mission.globalPreferences,
     slots: mission.slots.map((s) => ({
@@ -94,7 +129,10 @@ function missionForModel(mission: ShoppingMission) {
   };
 }
 
-function sameSlotSpec(a: MissionSlot, b: z.infer<typeof modelSlotSchema>): boolean {
+function sameSlotSpec(
+  a: MissionSlot,
+  b: z.infer<typeof modelSlotSchema>,
+): boolean {
   return (
     a.query === b.query &&
     JSON.stringify(a.hardConstraints) === JSON.stringify(b.hardConstraints) &&
@@ -102,14 +140,66 @@ function sameSlotSpec(a: MissionSlot, b: z.infer<typeof modelSlotSchema>): boole
   );
 }
 
+function normalizeDraft(
+  model: ModelMissionDraft,
+  current: MissionDraft | null,
+): MissionDraft {
+  const goal = model.goal?.trim() || current?.goal || null;
+  const countryCode =
+    model.countryCode?.toUpperCase() ?? current?.countryCode ?? "US";
+  const budget = model.budget
+    ? {
+        amount: model.budget.amount,
+        currency:
+          model.budget.currency?.toUpperCase() ??
+          current?.budget?.currency ??
+          "USD",
+      }
+    : (current?.budget ?? null);
+  const slots =
+    model.slots.length > 0
+      ? model.slots
+      : current?.slots.length
+        ? current.slots
+        : goal
+          ? [
+              {
+                label: goal,
+                query: goal,
+                required: true,
+                hardConstraints: [],
+                softPreferences: [],
+              },
+            ]
+          : [];
+
+  return {
+    goal,
+    countryCode,
+    budget,
+    globalHardConstraints:
+      model.globalHardConstraints.length > 0
+        ? model.globalHardConstraints
+        : (current?.globalHardConstraints ?? []),
+    globalPreferences:
+      model.globalPreferences.length > 0
+        ? model.globalPreferences
+        : (current?.globalPreferences ?? []),
+    slots,
+  };
+}
+
 export async function parseMission(
   input: { text: string; imageUrl?: string },
   current: ShoppingMission | null,
   client: MissionModelClient,
+  currentDraft: MissionDraft | null = null,
 ): Promise<ParseResult> {
   const user = current
     ? `${input.text}\n\nCurrent mission JSON:\n${JSON.stringify(missionForModel(current))}`
-    : input.text;
+    : currentDraft
+      ? `${input.text}\n\nCurrent onboarding draft JSON:\n${JSON.stringify(currentDraft)}`
+      : input.text;
 
   const raw = await client.complete({
     system: MISSION_SYSTEM_PROMPT,
@@ -119,23 +209,43 @@ export async function parseMission(
   });
 
   const parsed = modelOutputSchema.safeParse(raw);
-  if (!parsed.success) throw new Error("mission model output failed schema validation");
+  if (!parsed.success)
+    throw new Error("mission model output failed schema validation");
   const out = parsed.data;
   const reply = out.reply ?? undefined;
 
   if (out.intent === "smalltalk" || out.intent === "checkout") {
-    return { intent: out.intent, mission: null, missingFields: [], reply };
+    return {
+      intent: out.intent,
+      mission: null,
+      draft: null,
+      missingFields: [],
+      reply,
+    };
   }
 
-  const missingFields = [...out.missingFields];
-  if (out.mission && !out.mission.budget && !missingFields.includes("budget")) {
-    missingFields.push("budget"); // never invent a budget
-  }
-  if (!out.mission || missingFields.length > 0) {
-    return { intent: out.intent, mission: null, missingFields, reply };
+  // The model extracts facts; application code decides what is required.
+  // Country/currency use the configured market defaults and must never turn
+  // into schema-shaped onboarding questions.
+  const draft = out.mission
+    ? normalizeDraft(out.mission, currentDraft)
+    : currentDraft;
+  const missingFields = draft
+    ? [...(draft.goal ? [] : ["goal"]), ...(draft.budget ? [] : ["budget"])]
+    : out.missingFields.filter(
+        (field) => field === "goal" || field === "budget",
+      );
+  if (!draft || missingFields.length > 0) {
+    return {
+      intent: out.intent,
+      mission: null,
+      draft,
+      missingFields,
+      reply,
+    };
   }
 
-  const m = out.mission;
+  const m = draft;
   const budget = m.budget!;
   const isRevise = out.intent === "revise" && current !== null;
 
@@ -171,5 +281,5 @@ export async function parseMission(
     status: "draft",
   });
 
-  return { intent: out.intent, mission, missingFields: [], reply };
+  return { intent: out.intent, mission, draft: null, missingFields: [], reply };
 }
