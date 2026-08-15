@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import type { Message, Space } from "spectrum-ts";
 import {
+  CHECKOUT_POLL_NO,
+  CHECKOUT_POLL_YES,
   handleInbound,
   mergeLiveSlotState,
   type AgentLoopDeps,
@@ -249,5 +251,97 @@ describe("onboarding conversation", () => {
     expect(
       sent.filter((item): item is string => typeof item === "string").join(" "),
     ).not.toMatch(/country|currency/i);
+  });
+});
+
+describe("in-thread approval polls", () => {
+  function pollDeps(sent: unknown[]) {
+    const store = new MissionStore();
+    store.put("space-poll", mission());
+    const deps: AgentLoopDeps = {
+      store,
+      client: {
+        async complete() {
+          throw new Error("poll answers must not hit the model");
+        },
+      },
+      searchCatalog: async () => [],
+      createMerchantCarts: async () => [
+        {
+          name: "Aurora Outfitters",
+          domain: "aurora-outfitters.com",
+          items: [{ variantId: "v1", title: "Linen Dress", quantity: 1, livePrice: 8900 }],
+          subtotal: 8900,
+          continueUrl: "https://aurora-outfitters.com/cart/1:1",
+          mode: "handoff" as const,
+        },
+      ],
+      publicBaseUrl: "https://shop.example",
+    };
+    const space = {
+      id: "space-poll",
+      async send(content: unknown) {
+        sent.push(content);
+        return { edit: async () => undefined };
+      },
+      async responding(run: () => Promise<void>) {
+        await run();
+      },
+    } as unknown as Space;
+    return { deps, space };
+  }
+
+  it("a yes vote triggers checkout without a model call", async () => {
+    const sent: unknown[] = [];
+    const { deps, space } = pollDeps(sent);
+
+    await handleInbound(
+      space,
+      {
+        direction: "inbound",
+        content: { type: "poll_option", option: CHECKOUT_POLL_YES, selected: true },
+      } as unknown as Message,
+      deps,
+      {},
+    );
+
+    expect(deps.store.getCheckoutPlan("m1")).not.toBeNull();
+    expect(sent.length).toBeGreaterThan(0);
+  });
+
+  it("a no vote keeps shopping and never builds a checkout plan", async () => {
+    const sent: unknown[] = [];
+    const { deps, space } = pollDeps(sent);
+
+    await handleInbound(
+      space,
+      {
+        direction: "inbound",
+        content: { type: "poll_option", option: CHECKOUT_POLL_NO, selected: true },
+      } as unknown as Message,
+      deps,
+      {},
+    );
+
+    expect(deps.store.getCheckoutPlan("m1")).toBeNull();
+    expect(String(sent[0])).toContain("No rush");
+  });
+
+  it("ignores deselection events", async () => {
+    const sent: unknown[] = [];
+    const { deps, space } = pollDeps(sent);
+
+    await handleInbound(
+      space,
+      {
+        direction: "inbound",
+        content: { type: "poll_option", option: CHECKOUT_POLL_YES, selected: false },
+      } as unknown as Message,
+      deps,
+      {},
+    );
+
+    expect(deps.store.getCheckoutPlan("m1")).toBeNull();
+    expect(sent).toHaveLength(0);
   });
 });

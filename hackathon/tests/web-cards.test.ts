@@ -192,6 +192,33 @@ describe("renderCheckoutCard", () => {
     expect(html).not.toContain("Live total"); // handoff prices were never re-checked
   });
 
+  it("offers a combined add-all link for a multi-item handoff merchant", () => {
+    const p = plan({
+      merchants: [
+        {
+          name: "Sole Supply",
+          domain: "solesupply.example.com",
+          items: [
+            { variantId: "v9", title: "Court Sneaker 9.5", quantity: 1, livePrice: 7500, buyUrl: "https://solesupply.example.com/cart/900:1" },
+            { variantId: "v10", title: "Crew Socks", quantity: 1, livePrice: 1200, buyUrl: "https://solesupply.example.com/cart/910:1" },
+          ],
+          subtotal: 8700,
+          continueUrl: "https://solesupply.example.com/cart/900:1,910:1",
+          mode: "handoff",
+        },
+      ],
+      priceChanges: [],
+      liveTotal: 8700,
+      previousTotal: 8700,
+    });
+    const html = renderCheckoutCard(mission(), p);
+    expect(html).toContain("Add all 2 items to cart");
+    expect(html).toContain('href="https://solesupply.example.com/cart/900:1,910:1"');
+    // per-item links remain as secondary fallbacks
+    expect(html).toContain('href="https://solesupply.example.com/cart/900:1"');
+    expect(html).not.toContain("Each link buys one item");
+  });
+
   it("falls back to a labeled storefront link when a handoff item has no buy url", () => {
     const p = plan();
     p.merchants[1]!.items[0]!.buyUrl = undefined;

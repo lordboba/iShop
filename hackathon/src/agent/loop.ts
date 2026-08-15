@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { app as appCard, type Message, type Space } from "spectrum-ts";
+import { app as appCard, poll, type Message, type Space } from "spectrum-ts";
 import type {
   BundleResult,
   CheckoutPlan,
@@ -96,6 +96,21 @@ export async function handleInbound(
     await space.send(
       "Got the photo — tell me the goal, budget, and any must-haves.",
     );
+    return;
+  }
+
+  // In-thread yes/no approval: poll answers act as commands, so the buyer
+  // never has to leave the conversation to approve checkout.
+  if (content.type === "poll_option") {
+    if (!content.selected) return; // ignore deselections
+    const chosen = pollOptionLabel(content);
+    if (chosen === CHECKOUT_POLL_YES) {
+      await space.responding(() => handleCheckout(space, deps));
+    } else if (chosen === CHECKOUT_POLL_NO) {
+      await space.send(
+        'No rush — lock items on the card or text changes like "cheaper shoes".',
+      );
+    }
     return;
   }
 
@@ -263,6 +278,26 @@ async function runMissionSearch(
   await space.send(
     bundleSummary(deps.store.getBySpace(space.id) ?? latest, bundle),
   );
+  if (bundle.status === "ready") {
+    await space.send(
+      poll("Approve this bundle?", CHECKOUT_POLL_YES, CHECKOUT_POLL_NO),
+    );
+  }
+}
+
+export const CHECKOUT_POLL_YES = "Yes — get checkout links";
+export const CHECKOUT_POLL_NO = "Not yet, keep tweaking";
+
+// poll_option content carries the chosen option; field shape varies slightly
+// by provider, so accept both a string option and an option object's title.
+function pollOptionLabel(content: {
+  option?: unknown;
+  title?: unknown;
+}): string {
+  if (typeof content.option === "string") return content.option;
+  const optionTitle = (content.option as { title?: unknown } | undefined)?.title;
+  if (typeof optionTitle === "string") return optionTitle;
+  return typeof content.title === "string" ? content.title : "";
 }
 
 async function handleCheckout(

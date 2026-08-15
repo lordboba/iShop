@@ -127,14 +127,44 @@ function handoffCart(domain: string, items: ProductCandidate[]): MerchantCart {
       title: product.title,
       quantity: 1,
       livePrice: product.price, // no revalidation available in handoff mode
-      // One buy link per item — a single merchant-level link buys only one
-      // item, which would silently drop the rest of a multi-item handoff.
       buyUrl: product.buyUrl && isHttpsUrl(product.buyUrl) ? product.buyUrl : undefined,
     })),
     subtotal: items.reduce((sum, product) => sum + product.price, 0),
-    continueUrl: `https://${domain}`,
+    continueUrl: combinedCartPermalink(domain, items) ?? `https://${domain}`,
     mode: "handoff",
   };
+}
+
+// Shopify cart permalinks accept multiple items: /cart/ID1:QTY,ID2:QTY.
+// Combining lets one tap add a merchant's whole share of the bundle, instead
+// of one link per item. Falls back to null (bare-domain continueUrl) when any
+// item's numeric variant id can't be derived.
+function combinedCartPermalink(domain: string, items: ProductCandidate[]): string | null {
+  const segments: string[] = [];
+  let origin: string | null = null;
+  for (const product of items) {
+    let segment: string | null = null;
+    if (product.buyUrl && isHttpsUrl(product.buyUrl)) {
+      const url = new URL(product.buyUrl);
+      const match = url.pathname.match(/^\/cart\/(\d+:\d+)$/);
+      if (match?.[1]) {
+        segment = match[1];
+        origin ??= url.origin; // prefer the merchant's own checkout origin
+      }
+    }
+    if (!segment) {
+      // Strict full-numeric gid only — a partial numeric tail of a
+      // non-numeric id would build a permalink for the WRONG product.
+      const numericId = product.variantId.match(
+        /^gid:\/\/shopify\/ProductVariant\/(\d+)$/,
+      )?.[1];
+      segment = numericId ? `${numericId}:1` : null;
+    }
+    if (!segment) return null;
+    segments.push(segment);
+  }
+  if (segments.length === 0) return null;
+  return `${origin ?? `https://${domain}`}/cart/${segments.join(",")}`;
 }
 
 // Diff catalog prices against refreshed cart prices for CheckoutPlan.

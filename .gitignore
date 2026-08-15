@@ -1,0 +1,25 @@
+# Secrets (keep checked-in templates)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Dependencies and generated output
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Runtime state and tool caches
+.state/
+.cache/
+.turbo/
+.bun/
+
+# Local logs and machine-specific settings
+*.log
+.DS_Store
+**/.claude/settings.local.json
+*.swp
+*~

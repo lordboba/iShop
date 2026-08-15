@@ -124,6 +124,41 @@ describe("createMerchantCarts", () => {
     expect(carts[0]!.subtotal).toBe(15000);
   });
 
+  it("combines numeric-id handoff items into one multi-item cart permalink", async () => {
+    const shirt = candidate({
+      productId: "gid://shopify/p/handoff-shirt",
+      variantId: "gid://shopify/ProductVariant/1110001",
+      title: "Boutique Shirt",
+      sellerName: "Handoff Boutique",
+      sellerDomain: "handoff-boutique.com",
+      price: 4000,
+      buyUrl: "https://shop.handoff-boutique.com/cart/1110001:1?_gsid=abc",
+    });
+    const belt = candidate({
+      productId: "gid://shopify/p/handoff-belt",
+      variantId: "gid://shopify/ProductVariant/2220002",
+      title: "Boutique Belt",
+      sellerName: "Handoff Boutique",
+      sellerDomain: "handoff-boutique.com",
+      price: 2500,
+      buyUrl: "https://shop.handoff-boutique.com/cart/2220002:1",
+    });
+
+    const carts = await createMerchantCarts([shirt, belt], "US");
+
+    expect(carts).toHaveLength(1);
+    expect(carts[0]!.mode).toBe("handoff");
+    // One tap adds the merchant's whole share of the bundle.
+    expect(carts[0]!.continueUrl).toBe(
+      "https://shop.handoff-boutique.com/cart/1110001:1,2220002:1",
+    );
+    // Per-item links stay as fallback.
+    expect(carts[0]!.items.map((i) => i.buyUrl)).toEqual([
+      "https://shop.handoff-boutique.com/cart/1110001:1?_gsid=abc",
+      "https://shop.handoff-boutique.com/cart/2220002:1",
+    ]);
+  });
+
   it("drops a non-https buy url instead of carrying it into the card", async () => {
     const sketchy = candidate({
       variantId: "gid://shopify/ProductVariant/sketchy",

@@ -15,6 +15,8 @@ const checkoutStyles = `
   a.checkout-link { display: block; text-align: center; margin-top: 10px; padding: 9px 12px;
                     border-radius: 10px; background: var(--accent); color: #fff;
                     font-weight: 600; text-decoration: none; }
+  a.checkout-link.secondary { background: transparent; color: var(--accent);
+                              border: 1px solid var(--accent); font-weight: 500; }
   .notice { background: var(--accent-soft); border: 1px solid var(--accent); color: var(--accent);
             border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; font-size: 13px; }
   .handoff-note { color: var(--muted); font-size: 12px; margin-top: 8px; }
@@ -38,16 +40,23 @@ function checkoutLinks(merchant: MerchantCart): string {
   if (merchant.mode === "cart") {
     return `<a class="checkout-link" href="${escapeHtml(merchant.continueUrl)}">Open secure checkout</a>`;
   }
-  // Handoff: no cart API, so prices were never revalidated and one link buys
-  // exactly one item — render a labeled link per item and say so.
+  // Handoff: no cart API, so prices were never revalidated. A combined cart
+  // permalink adds every item in one tap; per-item links remain as fallback.
+  const combined =
+    merchant.items.length > 1 && merchant.continueUrl.includes("/cart/")
+      ? `<a class="checkout-link" href="${escapeHtml(merchant.continueUrl)}">Add all ${merchant.items.length} items to cart</a>`
+      : "";
   const links = merchant.items
     .map((item) =>
       item.buyUrl
-        ? `<a class="checkout-link" href="${escapeHtml(item.buyUrl)}">Buy ${escapeHtml(item.title)}</a>`
-        : `<a class="checkout-link" href="${escapeHtml(merchant.continueUrl)}">Find ${escapeHtml(item.title)} on ${escapeHtml(merchant.domain)}</a>`,
+        ? `<a class="checkout-link${combined ? " secondary" : ""}" href="${escapeHtml(item.buyUrl)}">Buy ${escapeHtml(item.title)}</a>`
+        : `<a class="checkout-link${combined ? " secondary" : ""}" href="${escapeHtml(merchant.continueUrl)}">Find ${escapeHtml(item.title)} on ${escapeHtml(merchant.domain)}</a>`,
     )
     .join("");
-  return `<div class="handoff-note">Prices are from when you picked — confirm on the merchant site. Each link buys one item.</div>${links}`;
+  const note = combined
+    ? "Prices are from when you picked — confirm on the merchant site."
+    : "Prices are from when you picked — confirm on the merchant site. Each link buys one item.";
+  return `<div class="handoff-note">${note}</div>${combined}${links}`;
 }
 
 function merchantSection(merchant: MerchantCart, plan: CheckoutPlan, currency: string): string {
