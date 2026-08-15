@@ -1,8 +1,8 @@
-# Mission Shopping Agent Implementation Plan (iMessage / Photon pivot)
+# iShop Implementation Plan (iMessage / Photon pivot)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a consumer shopping agent that lives in an iMessage thread. The buyer texts a multi-item goal (optionally with an inspiration photo); the agent turns it into a constraint-safe bundle from live Shopify inventory, renders the plan as a live-updating app card inside the thread, accepts revisions by text, and hands approved carts to Shopify-hosted checkout.
+**Goal:** Build iShop — the shopping agent in your iPhone. The buyer texts a multi-item goal (optionally with an inspiration photo); the agent turns it into a constraint-safe bundle from live Shopify inventory, renders the plan as a live-updating app card inside the thread, accepts revisions by text, and hands approved carts to Shopify-hosted checkout.
 
 **Architecture:** One long-lived Node process runs two things: (1) a Photon Spectrum message loop that owns the conversation, and (2) a small Hono HTTP server that serves the mission/checkout card pages and JSON endpoints. The server holds a typed `ShoppingMission` per conversation space, uses OpenAI structured outputs to translate messages into mission changes, Shopify's UCP Global Catalog MCP to find products, a deterministic bundle optimizer to enforce hard constraints and total budget, and merchant Cart MCP to revalidate prices and create checkout handoffs. The mission board is a web page rendered *inside* the iMessage thread via Spectrum's `app(url, { live: true })` card, edited in place as the mission evolves. Payment stays on Shopify-hosted checkout.
 

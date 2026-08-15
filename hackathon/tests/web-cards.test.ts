@@ -118,6 +118,8 @@ function makeDeps(m: ShoppingMission | null = mission()): WebDeps & {
 describe("renderMissionCard", () => {
   it("shows goal, readiness count, formatted prices, and blockers", () => {
     const html = renderMissionCard(mission());
+    expect(html).toContain("iShop · The shopping agent in your iPhone");
+    expect(html).toContain("<title>iShop · Rooftop party outfit</title>");
     expect(html).toContain("Rooftop party outfit");
     expect(html).toContain("1 / 2 items ready");
     expect(html).toContain("$89.00"); // 8900 cents
@@ -171,6 +173,9 @@ describe("escapeHtml", () => {
 describe("renderCheckoutCard", () => {
   it("shows merchant groups, subtotals, price changes, and checkout links", () => {
     const html = renderCheckoutCard(mission(), plan());
+    expect(html).toContain(
+      "<title>iShop · Checkout · Rooftop party outfit</title>",
+    );
     expect(html).toContain("Northwind Outfitters");
     expect(html).toContain("Sole Supply");
     expect(html).toContain("$91.00"); // live subtotal

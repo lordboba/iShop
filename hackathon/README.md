@@ -1,6 +1,10 @@
-# hackathon
+# iShop
 
-A [Spectrum](https://photon.codes/docs/spectrum-ts) project. Wired with: imessage.
+**The shopping agent in your iPhone.**
+
+iShop turns an iMessage shopping brief into a constraint-aware, budget-correct bundle from live Shopify inventory. Refine the bundle by text, lock the items you like, and continue to merchant-hosted checkout when you are ready.
+
+Built with [Spectrum](https://photon.codes/docs/spectrum-ts), Shopify UCP/MCP, OpenAI, and Hono.
 
 ## Environment
 
@@ -18,8 +22,9 @@ bun install
 bun start
 ```
 
-## Where to go next
+## Development
 
 - [Spectrum docs](https://photon.codes/docs/spectrum-ts)
-- Edit `src/index.ts` to replace the echo loop with real agent logic.
-- Add more providers from `spectrum-ts/providers/*`.
+- The Spectrum message loop starts in `src/index.ts`.
+- The live mission and checkout cards are served from `src/web/`.
+- Unit tests live in `tests/` and run with `bun test`.

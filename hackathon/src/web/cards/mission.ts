@@ -50,6 +50,8 @@ export const cardStyles = `
   body { background: var(--canvas); color: var(--ink); padding: 14px;
          font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
   main { max-width: 480px; margin: 0 auto; }
+  .brand { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .04em;
+           margin-bottom: 4px; text-transform: uppercase; }
   h1 { font-size: 19px; line-height: 1.25; margin-bottom: 4px; }
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
@@ -175,11 +177,12 @@ export function renderMissionCard(mission: ShoppingMission): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(mission.goal)}</title>
+<title>iShop · ${escapeHtml(mission.goal)}</title>
 <style>${cardStyles}</style>
 </head>
 <body>
 <main>
+  <div class="brand">iShop · The shopping agent in your iPhone</div>
   <h1>${escapeHtml(mission.goal)}</h1>
   <div class="sub">${ready} / ${mission.slots.length} items ready · ${escapeHtml(mission.status)}</div>
   ${globals.length ? `<div class="chips">${globals.map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("")}</div>` : ""}

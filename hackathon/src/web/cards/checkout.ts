@@ -82,11 +82,12 @@ export function renderCheckoutCard(mission: ShoppingMission, plan: CheckoutPlan)
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Checkout · ${escapeHtml(mission.goal)}</title>
+<title>iShop · Checkout · ${escapeHtml(mission.goal)}</title>
 <style>${cardStyles}${checkoutStyles}</style>
 </head>
 <body>
 <main>
+  <div class="brand">iShop · The shopping agent in your iPhone</div>
   <h1>Checkout</h1>
   <div class="sub">${escapeHtml(mission.goal)} · ${plan.merchants.length} merchant${plan.merchants.length === 1 ? "" : "s"}</div>
   <div class="card">

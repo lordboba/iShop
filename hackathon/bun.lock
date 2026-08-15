@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "hackathon",
+      "name": "ishop",
       "dependencies": {
         "hono": "4.13.1",
         "openai": "7.4.0",
