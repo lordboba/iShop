@@ -13,7 +13,7 @@ import {
 const MAX_CANDIDATES = 6;
 
 function catalogEndpoint(): string {
-  return process.env.SHOPIFY_CATALOG_MCP_URL ?? "https://catalog.shopify.com/api/mcp";
+  return process.env.SHOPIFY_CATALOG_MCP_URL ?? "https://catalog.shopify.com/api/ucp/mcp";
 }
 
 export async function searchCatalog(args: {

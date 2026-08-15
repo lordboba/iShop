@@ -49,7 +49,13 @@ export async function callMcpTool<T>(input: {
         jsonrpc: "2.0",
         id: 1,
         method: "tools/call",
-        params: { name: tool, arguments: input.arguments },
+        params: {
+          name: tool,
+          arguments: input.arguments,
+          // Shopify UCP requires the agent profile inside the payload meta,
+          // not just a transport header.
+          meta: { "ucp-agent": { profile: profileUrl } },
+        },
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
